@@ -306,7 +306,7 @@ Environment variables (GF_...)  >  custom.ini  >  defaults.ini
 logger=http.server t=2026-10-05T10:15:02.114+05:30 level=info msg="HTTP Server Listen" address=[::]:3000 protocol=http
 ```
 
-- Useful filters: `level=error`, `logger=datasources`, `logger=ngalert` (alerting), `logger=context` (requests).
+- Useful filters: `level=error`, `logger=datasources`, `logger=ngalert` (alerting), `logger=context` (HTTP requests: failed ones by default, every request when `[server] router_logging = true`).
 
 ### 1.8 UI Tour
 
@@ -386,13 +386,17 @@ Loki indexes only **labels** (e.g. `job`, `service_name`), not the full log text
 > **Before you start:**
 > - Keep a PowerShell window open. Open it **as Administrator** only when a step says so.
 > - Every lab uses the folder layout from Day 0, section 9.
-> - Ignore any version numbers in screenshots or outputs. Use the versions pinned in the lab repository.
+> - Version numbers in the expected outputs may differ slightly from yours. That's fine.
 
 ### Lab 1: Set up the Windows lab stack
 
 **Goal:** Install and run every lab component, and confirm they talk to each other.
 
 **Time:** about 90 minutes (less if IT has pre-installed the software)
+
+> **Note:** This lab is also the **pre-training setup guide**.
+> - If you completed it before Day 1, use this session to follow the trainer's walkthrough of each component and re-check Step 1.11.
+> - If not, complete it now with the trainer's help.
 
 **What you'll build:**
 
@@ -413,6 +417,7 @@ Download the following into your `Downloads` folder, unless IT has already provi
 
 | Component | Where | File to pick |
 |---|---|---|
+| Git for Windows | `https://git-scm.com/download/win` | 64-bit installer (skip if Git is already installed) |
 | Node.js LTS (24.x) | `https://nodejs.org/en/download` | Windows Installer (`.msi`), or Standalone Binary (`.zip`) if you lack admin rights |
 | PostgreSQL | `https://www.postgresql.org/download/windows/` | EDB installer for Windows x86-64 |
 | windows_exporter | `https://github.com/prometheus-community/windows_exporter/releases` | `windows_exporter-<version>-amd64.msi` |
@@ -470,7 +475,7 @@ Copy-Item C:\grafana-lab\repo\sample-app\* C:\grafana-lab\sample-app\ -Recurse -
 Get-ChildItem C:\grafana-lab\sample-app -Recurse -Name
 ```
 
-✅ **Expected:** `app.js`, `load.js`, `package.json`, `README.md`, `sql\setup-db.sql`, `sql\schema.sql`
+✅ **Expected:** `.gitignore`, `app.js`, `load.js`, `package.json`, `README.md`, `sql\setup-db.sql`, `sql\schema.sql`
 
    Replace `<lab-repo-url>` with the link shared by the trainer. If Git is blocked, download the repository as a ZIP from GitHub (**Code → Download ZIP**) and copy its `sample-app` folder instead.
 
@@ -605,7 +610,8 @@ Get-Content C:\grafana-lab\sample-app\logs\app.log -Tail 3
 
 ```powershell
 $lab = 'C:\grafana-lab'
-Expand-Archive "$HOME\Downloads\prometheus-*.windows-amd64.zip" -DestinationPath "$lab\tmp" -Force
+$zip = Get-ChildItem "$HOME\Downloads\prometheus-*.windows-amd64.zip" | Sort-Object Name -Descending | Select-Object -First 1
+Expand-Archive $zip.FullName -DestinationPath "$lab\tmp" -Force
 Copy-Item "$lab\tmp\prometheus-*\*" "$lab\prometheus\" -Recurse -Force
 Get-ChildItem "$lab\prometheus"
 ```
@@ -658,6 +664,7 @@ cd "$lab\prometheus"
 1. Extract Loki:
 
 ```powershell
+$lab = 'C:\grafana-lab'
 Expand-Archive "$HOME\Downloads\loki-windows-amd64.exe.zip" -DestinationPath "$lab\loki" -Force
 ```
 
@@ -722,7 +729,10 @@ Invoke-RestMethod http://localhost:3100/ready
 
 1. Extract Alloy:
 
+   Use the second PowerShell window; Loki keeps running in the first.
+
 ```powershell
+$lab = 'C:\grafana-lab'
 Expand-Archive "$HOME\Downloads\alloy-windows-amd64.exe.zip" -DestinationPath "$lab\alloy" -Force
 ```
 
@@ -781,7 +791,9 @@ cd "$lab\alloy"
 1. Extract Grafana:
 
 ```powershell
-Expand-Archive "$HOME\Downloads\grafana-*.windows-amd64.zip" -DestinationPath "$lab\tmp" -Force
+$lab = 'C:\grafana-lab'
+$zip = Get-ChildItem "$HOME\Downloads\grafana-*.windows-amd64.zip" | Sort-Object Name -Descending | Select-Object -First 1
+Expand-Archive $zip.FullName -DestinationPath "$lab\tmp" -Force
 Copy-Item "$lab\tmp\grafana-*\*" "$lab\grafana\" -Recurse -Force
 Get-ChildItem "$lab\grafana"     # expect: bin, conf, public, ...
 ```
@@ -918,17 +930,26 @@ psql -U grafana_reader -h localhost -d ordersdb -c "SELECT count(*) FROM orders 
 
 ✅ **Expected:** `sqlite3`. The Grafana internal DB file is `C:\grafana-lab\grafana\data\grafana.db`.
 
-#### Step 2.2: Change a setting in custom.ini
+#### Step 2.2: Change settings in custom.ini
 
-1. Open `C:\grafana-lab\grafana\conf\custom.ini` in VS Code and add:
+1. Open `C:\grafana-lab\grafana\conf\custom.ini` in VS Code and make two changes:
+   - Add `default_theme = light` to the `[users]` section.
+   - Add `router_logging = true` to the `[server]` section. This logs every HTTP request; we use it in Step 2.4.
+
+   The two sections should now look like this:
 
 ```ini
+[server]
+http_port = 3000
+root_url = http://localhost:3000/
+router_logging = true
+
 [users]
 allow_sign_up = false
 default_theme = light
 ```
 
-   Merge `default_theme` into the existing `[users]` section; do not create a second `[users]` header.
+   Merge the new keys into the existing sections; do not create a second `[server]` or `[users]` header.
 
 2. Restart Grafana only:
 
@@ -942,7 +963,7 @@ Start-Process 'C:\grafana-lab\grafana\bin\grafana.exe' -ArgumentList 'server','-
 
 ✅ **Expected:** the light theme. Your own profile may still show your personal theme choice, because user preferences override the server default.
 
-4. Remove `default_theme = light` and restart Grafana again.
+4. Remove `default_theme = light` and restart Grafana again. Keep `router_logging = true` for now.
 
 #### Step 2.3: Prove the precedence rule (environment variable > custom.ini)
 
@@ -986,9 +1007,14 @@ Select-String -Path $log -Pattern 'level=error' | Select-Object -Last 5
 Get-Content $log -Tail 10 -Wait
 ```
 
-While the live tail is running, log out of Grafana and log back in. Watch the new lines appear.
+While the live tail is running, click around in Grafana (open Dashboards, then Explore).
 
-✅ **Expected:** you see the Grafana version, the 3001 and 3000 listen lines from Step 2.3, and new request lines as you use the UI.
+✅ **Expected:**
+- the Grafana version;
+- the 3001 and 3000 listen lines from Step 2.3;
+- as you click, new lines like `logger=context ... msg="Request Completed" method=GET path=/api/... status=200`.
+
+Finally, remove `router_logging = true` from `custom.ini` and restart Grafana. Logging every request is noisy, so it's normally used only while troubleshooting.
 
 #### Step 2.5: UI tour tasks
 
@@ -1246,14 +1272,14 @@ When is TestData useful in real projects?
 | 2 | `npm install` hangs or fails with `ETIMEDOUT` / `ECONNREFUSED` | Corporate proxy or blocked registry | Set `npm config set proxy` / `https-proxy`, or ask IT to allow `registry.npmjs.org` |
 | 3 | `psql` not recognised | PostgreSQL `bin` folder not in PATH | `$env:Path += ';C:\Program Files\PostgreSQL\<version>\bin'` |
 | 4 | `psql: error: password authentication failed` | Wrong password, or the wrong `PGPASSWORD` still set | Re-set `$env:PGPASSWORD` for the user you are connecting as |
-| 5 | orders-api exits with `ECONNREFUSED 127.0.0.1:5432` | PostgreSQL service not running | `services.msc` → start `postgresql-x64-<version>` |
-| 6 | orders-api returns 500 with `relation "orders" does not exist` | `schema.sql` not run, or run against the wrong database | Re-run Step 1.4 command 2 with `-d ordersdb` |
+| 5 | Order requests return 500; `logs\app.log` shows `connect ECONNREFUSED ...:5432` | PostgreSQL service not running | `services.msc` → start `postgresql-x64-<version>` |
+| 6 | Order requests return 500; `logs\app.log` shows `relation "orders" does not exist` | `schema.sql` not run, or run against the wrong database | Re-run Step 1.4 command 2 with `-d ordersdb` |
 | 7 | orders-api fails with `EADDRINUSE :::8080` | Another program uses port 8080, or the app is already running | `netstat -ano \| findstr :8080`, then stop that process (or run `stop-lab.ps1`) |
 | 8 | Prometheus target `orders-api` is DOWN | App not running | Start it (`start-lab.ps1`) and check `http://localhost:8080/metrics` |
 | 9 | Prometheus target `windows` is DOWN | windows_exporter service stopped | `Start-Service windows_exporter` (as Administrator) |
 | 10 | `promtool check config` fails | YAML indentation error (tabs, or misaligned `-`) | Use spaces only; compare with Step 1.7 |
 | 11 | Loki fails with `mkdir ... The filename, directory name, or volume label syntax is incorrect` | Backslashes in YAML paths | Use `C:/grafana-lab/...` forward slashes |
-| 12 | Loki `/ready` returns `Ingester not ready` | Loki is still starting | Wait 15–30 seconds and retry |
+| 12 | Loki `/ready` returns `Ingester not ready` | Loki is still starting | Wait up to a minute and retry |
 | 13 | Loki has no `orders-api` label | Alloy not running, wrong file path in `config.alloy`, or no log file yet | Check the Alloy UI (`:12345`): component health and errors; confirm `logs\app.log` exists |
 | 14 | Alloy UI shows `loki.write` errors: `connection refused` | Loki not running | Start Loki first, then Alloy |
 | 15 | Grafana window closes immediately | Error in `custom.ini`, or port 3000 in use | Read the last lines of `grafana.log`; check for duplicate `[section]` headers |
@@ -1401,7 +1427,7 @@ Invoke-RestMethod -Method Post http://localhost:8080/admin/chaos -ContentType 'a
 
 **Exercise 2:**
 - Prometheus: `sum(rate(http_requests_total{status=~"5.."}[1m]))`
-- Loki: `{job="orders-api"} | json | level="error"` or `{job="orders-api"} |= "injected failure"`
+- Loki: `{job="orders-api"} | json | level="error"` or `{job="orders-api"} |= "request failed"`
 - Errors take a minute or so to show in `rate()` because of the range window.
 
 **Exercise 3:** Grafana fails to bind, because Loki already listens on 3100. The log shows an error such as `bind: Only one usage of each socket address ... is normally permitted`. Lesson: every component needs a unique port. Check with `netstat -ano | findstr :<port>`.

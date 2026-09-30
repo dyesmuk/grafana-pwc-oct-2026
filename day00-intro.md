@@ -43,7 +43,7 @@ Welcome to the course. Read this file **before Day 1**. It covers:
 | Daily timing | 9:30 AM to 5:30 PM IST |
 | Audience | Specific project team |
 | Approach | Hands-on (~70% labs), industry-standard, enterprise-focused |
-| Grafana version | Grafana OSS 12.x (exact versions of all components are pinned in the lab repository) |
+| Grafana version | Grafana OSS 12.x; latest stable versions of the other components |
 
 > **Note:** Some items may change after the connect call with the project team. These include:
 > - the Day 4 track
@@ -71,14 +71,13 @@ The courseware is a set of Markdown files, one per day:
 
 The **GitHub lab repository** contains:
 
-- the sample application source code (`sample-app/`), including its SQL scripts;
-- config files and scripts used in the labs.
+- the sample application source code (`sample-app/`), including its SQL scripts.
 
-The link will be shared before the training. The day files show *how to use* the code; the code itself lives only in the repository.
+The link will be shared before the training. The day files show *how to use* the code; the code itself lives only in the repository. Lab config files (Prometheus, Loki, Alloy, Grafana) and the start/stop scripts are given in full in the Day 1 file.
 
 ### 2.2 Structure of every day file
 
-Each day file (Day 1 to Day 5) has the same sections, so you always know where to look:
+Each day file (Day 1 to Day 5) has the same sections, plus appendices where needed, so you always know where to look:
 
 | Section | What it contains |
 |---|---|
@@ -210,13 +209,15 @@ scrape_configs:
 - Terraform CLI (optional, for Day 5)
 - MS Teams / Zoom / Webex, as used by the client
 
-> **Note:** Installers, config files and a step-by-step setup guide will be shared before the training. Detailed installation steps are also covered in **Day 1, Lab 1**.
+> **Note:** The step-by-step setup guide is **Day 1, Lab 1**. It is shared before the training together with the lab repository link.
+> - **If you can, complete it before Day 1** and run the checklist in section 10.
+> - On Day 1, the trainer walks through the setup to explain each component, and helps anyone who couldn't finish it.
 
 ### 4.3 Permissions and network
 
-- Access to `grafana.com`, `github.com`, `postgresql.org` and `nodejs.org` for downloads
+- Access to `grafana.com`, `github.com`, `postgresql.org`, `nodejs.org` and `git-scm.com` for downloads
 - Access to `registry.npmjs.org`, so `npm install` can fetch the sample application's packages (or a corporate npm proxy)
-- Windows Firewall must allow these local ports: **3000, 9090, 9182, 3100, 5432, 8080**
+- Windows Firewall must allow these local ports: **3000, 9090, 9182, 3100, 5432, 8080, 12345**
 - Additional local ports used on Day 4 (tracing) will be listed in the Day 4 file
 
 ### 4.4 Alternatives (to be discussed)
@@ -260,6 +261,7 @@ By the end of this training, you will be able to:
 
 **Labs:**
 - Set up the Windows lab stack
+- Grafana configuration, server log and UI tour
 - Connect data sources
 - Import and study a community dashboard
 
@@ -408,10 +410,7 @@ Traces:   orders-api (Day 4)    ──► Alloy ──► Tempo ──TraceQL─
 - **Collectors / stores:** Prometheus, Alloy, Loki, Tempo and PostgreSQL collect and store it.
 - **Grafana:** queries the stores and visualises and alerts on the results. It never collects data itself.
 
-- **Metrics path:** the sample app and windows_exporter expose metrics → Prometheus scrapes them → Grafana queries them with **PromQL**.
-- **Logs path:** the sample app writes log files → Alloy reads and ships them → Loki stores them → Grafana queries them with **LogQL**.
-- **SQL path:** the sample app writes business data (orders) into PostgreSQL → Grafana queries it with **SQL**.
-- **Traces path (Day 4):** the sample app sends OpenTelemetry traces to Alloy → Tempo (local or Grafana Cloud) → Grafana queries them with **TraceQL**.
+> **Note:** Prometheus *pulls* (scrapes) metrics from the producers. Alloy *pushes* logs, and later traces, to Loki and Tempo. On Day 4, Tempo runs locally or in the Grafana Cloud free tier.
 
 ---
 
@@ -426,13 +425,14 @@ C:\grafana-lab\
 ├── grafana\             Grafana OSS (conf\custom.ini lives here)
 ├── prometheus\          prometheus.exe + prometheus.yml
 ├── windows_exporter\    windows_exporter installer / exe
-├── loki\                loki.exe + loki-config.yaml
-├── alloy\               Alloy config (config.alloy)
+├── loki\                loki-windows-amd64.exe + loki-config.yaml
+├── alloy\               alloy-windows-amd64.exe + config.alloy
 ├── sample-app\          orders-api (Node.js + Express) + logs\
 ├── provisioning\        dashboards & data sources as code (Day 5)
 ├── dashboards\          exported dashboard JSON files
 ├── terraform\           Terraform files (Day 5, optional)
 ├── repo\                clone of the GitHub lab repository
+├── tmp\                 scratch folder for extracting downloads
 ├── start-lab.ps1        starts the lab stack
 └── stop-lab.ps1         stops the lab stack
 ```
@@ -450,11 +450,13 @@ C:\grafana-lab\
 
 ## 10. Pre-Training Validation Checklist
 
-Complete this **before Day 1** and confirm to the coordinator. Tick each item:
+Complete this **before Day 1**, after finishing Day 1, Lab 1 (the setup guide). Confirm to the coordinator. Tick each item:
 
 - [ ] Grafana opens at `http://localhost:3000`
-- [ ] Prometheus opens at `http://localhost:9090` and shows `windows_exporter` as **UP** (Status → Targets)
-- [ ] Loki and PostgreSQL services are running
+- [ ] Prometheus opens at `http://localhost:9090` and shows all three targets (`prometheus`, `windows`, `orders-api`) as **UP** (Status → Target health)
+- [ ] Loki is ready (`http://localhost:3100/ready` returns `ready`) and the PostgreSQL service is running
+- [ ] orders-api responds at `http://localhost:8080/health`
+- [ ] Alloy UI (`http://localhost:12345`) shows all components as healthy
 - [ ] Able to log in to Grafana and add a data source
 - [ ] Access to the GitHub lab repository
 
@@ -462,7 +464,7 @@ Complete this **before Day 1** and confirm to the coordinator. Tick each item:
 
 ```powershell
 # Check all lab ports are listening
-3000, 9090, 9182, 3100, 5432, 8080 | ForEach-Object {
+3000, 9090, 9182, 3100, 5432, 8080, 12345 | ForEach-Object {
     $r = Test-NetConnection localhost -Port $_ -WarningAction SilentlyContinue
     "{0,-6} {1}" -f $_, ($(if ($r.TcpTestSucceeded) {"OK"} else {"NOT LISTENING"}))
 }
@@ -482,12 +484,12 @@ Invoke-RestMethod http://localhost:3000/api/health
 | Symptom | Likely cause | What to do |
 |---|---|---|
 | Port shows NOT LISTENING | Component not started | Run `C:\grafana-lab\start-lab.ps1`. For windows_exporter and PostgreSQL, start the service from `services.msc` |
-| Page loads on the same PC but not after restart | Service not set to start automatically | Set startup type to *Automatic* in `services.msc` |
-| `windows_exporter` target is DOWN | Wrong target in `prometheus.yml`, or firewall | Check the target is `localhost:9182`; allow the port in the firewall |
+| Everything stops working after a PC restart | The lab components are not services, so they don't auto-start | Run `C:\grafana-lab\start-lab.ps1 -WithLoad` after each restart. Set the PostgreSQL and windows_exporter services to *Automatic* in `services.msc` |
+| `windows_exporter` target is DOWN | Service stopped, or wrong target in `prometheus.yml` | Start the `windows_exporter` service; check the target is `localhost:9182` |
 | Cannot download installers | Proxy / corporate network block | Ask IT to allow the sites in section 4.3, or use pre-downloaded installers |
 | No admin rights | Corporate policy | Request IT to pre-install the stack, or use the Grafana Cloud alternative |
 
-> **Note:** If you cannot complete the checklist, inform the coordinator **at least one day before** the training. Day 1 labs depend on it.
+> **Note:** If you cannot complete the checklist, inform the coordinator **at least one day before** the training, so issues (admin rights, blocked downloads) can be sorted out with IT in time.
 
 ---
 
