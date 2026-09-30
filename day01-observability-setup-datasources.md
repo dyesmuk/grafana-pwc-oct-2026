@@ -27,7 +27,7 @@
 6. [Quiz](#quiz)
 7. [Summary & Cheat Sheet](#summary--cheat-sheet)
 8. [Answers](#answers)
-9. [Appendix A – orders-api Source Code](#appendix-a--orders-api-source-code)
+9. [Appendix A – Sample Application Files](#appendix-a--sample-application-files)
 
 ---
 
@@ -462,11 +462,18 @@ npm -v
    - Password for the `postgres` superuser: choose one and **note it down**.
    - Port: **5432**
    - Locale: default
-2. Create the sample app's SQL files:
-   - `C:\grafana-lab\sample-app\sql\setup-db.sql`
-   - `C:\grafana-lab\sample-app\sql\schema.sql`
+2. Get the sample application from the lab repository. It includes the SQL scripts used below.
 
-   Copy them from the lab repository, or from [Appendix A](#appendix-a--orders-api-source-code).
+```powershell
+git clone <lab-repo-url> C:\grafana-lab\repo
+Copy-Item C:\grafana-lab\repo\sample-app\* C:\grafana-lab\sample-app\ -Recurse -Force
+Get-ChildItem C:\grafana-lab\sample-app -Recurse -Name
+```
+
+✅ **Expected:** `app.js`, `load.js`, `package.json`, `README.md`, `sql\setup-db.sql`, `sql\schema.sql`
+
+   Replace `<lab-repo-url>` with the link shared by the trainer. If Git is blocked, download the repository as a ZIP from GitHub (**Code → Download ZIP**) and copy its `sample-app` folder instead.
+
 3. Run the scripts. Replace `17` with your PostgreSQL major version if it differs.
 
 ```powershell
@@ -524,10 +531,7 @@ Get-Service windows_exporter
 
 #### Step 1.6: Set up the sample application (orders-api)
 
-1. Create these files in `C:\grafana-lab\sample-app`, from the lab repository or [Appendix A](#appendix-a--orders-api-source-code):
-   - `package.json`
-   - `app.js`
-   - `load.js`
+1. The app's files are already in `C:\grafana-lab\sample-app`, copied from the lab repository in Step 1.4. See [Appendix A](#appendix-a--sample-application-files) for what each file does.
 2. Install the dependencies:
 
 ```powershell
@@ -1426,312 +1430,28 @@ FROM orders;
 
 ---
 
-## Appendix A – orders-api Source Code
+## Appendix A – Sample Application Files
 
-These files are also in the lab repository. If you create them by hand, save them with **UTF-8** encoding in the paths shown.
+The source code of `orders-api` is in the **GitHub lab repository**, in the `sample-app/` folder. It is not reproduced in this handout. Copy the folder to `C:\grafana-lab\sample-app` (Day 1, Step 1.4).
 
-### `C:\grafana-lab\sample-app\package.json`
+| File | What it does |
+|---|---|
+| `package.json` | Project definition. Dependencies: `express` (web framework), `prom-client` (Prometheus metrics), `pino` (JSON logging), `pg` (PostgreSQL driver). |
+| `app.js` | The service: API endpoints, metrics at `/metrics`, JSON logs to `logs\app.log`, orders stored in PostgreSQL, fault injection at `/admin/chaos`. |
+| `load.js` | Load generator. `node load.js 5` sends about 5 requests/sec with a realistic mix of creates, reads, 404s, invalid orders (400) and slow calls. |
+| `sql\setup-db.sql` | Creates the `orders_app` and `grafana_reader` users and the `ordersdb` database. Run as `postgres`. |
+| `sql\schema.sql` | Creates the `orders` table, grants read-only access to `grafana_reader`, and seeds about 5,000 orders over the last 30 days. Run as `orders_app`. |
+| `README.md` | Quick reference: setup, endpoints, fault injection, environment variables. |
 
-```json
-{
-  "name": "orders-api",
-  "version": "1.0.0",
-  "description": "Sample Node.js + Express service for the Grafana training labs",
-  "main": "app.js",
-  "private": true,
-  "scripts": {
-    "start": "node app.js",
-    "load": "node load.js 5"
-  },
-  "dependencies": {
-    "express": "^5.1.0",
-    "pg": "^8.13.0",
-    "pino": "^9.6.0",
-    "prom-client": "^15.1.3"
-  }
-}
-```
+**Environment variables** (all optional; the defaults match the lab):
 
-### `C:\grafana-lab\sample-app\app.js`
+| Variable | Default |
+|---|---|
+| `PORT` | `8080` |
+| `PGHOST` / `PGPORT` / `PGDATABASE` | `localhost` / `5432` / `ordersdb` |
+| `PGUSER` / `PGPASSWORD_APP` | `orders_app` / `orders_app_pw` |
 
-```javascript
-// orders-api: sample service for the Grafana training labs.
-// Exposes Prometheus metrics, writes JSON logs to logs/app.log,
-// stores orders in PostgreSQL and supports fault injection.
-
-const express = require('express');
-const client = require('prom-client');
-const pino = require('pino');
-const { Pool } = require('pg');
-
-const PORT = Number(process.env.PORT || 8080);
-
-// ---------- Logging (JSON lines to a file, tailed by Alloy) ----------
-const logger = pino(
-  {
-    base: { service: 'orders-api' },
-    timestamp: pino.stdTimeFunctions.isoTime,
-    formatters: { level: (label) => ({ level: label }) },
-  },
-  pino.destination({ dest: './logs/app.log', mkdir: true, sync: false })
-);
-
-// ---------- Database ----------
-const pool = new Pool({
-  host: process.env.PGHOST || 'localhost',
-  port: Number(process.env.PGPORT || 5432),
-  database: process.env.PGDATABASE || 'ordersdb',
-  user: process.env.PGUSER || 'orders_app',
-  password: process.env.PGPASSWORD_APP || 'orders_app_pw',
-  max: 10,
-});
-
-// ---------- Metrics ----------
-client.collectDefaultMetrics(); // process_* and nodejs_* runtime metrics
-
-const httpRequests = new client.Counter({
-  name: 'http_requests_total',
-  help: 'Total HTTP requests',
-  labelNames: ['method', 'route', 'status'],
-});
-const httpDuration = new client.Histogram({
-  name: 'http_request_duration_seconds',
-  help: 'HTTP request duration in seconds',
-  labelNames: ['method', 'route', 'status'],
-  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
-});
-const inFlight = new client.Gauge({
-  name: 'http_requests_in_flight',
-  help: 'HTTP requests currently being processed',
-});
-const ordersCreated = new client.Counter({
-  name: 'orders_created_total',
-  help: 'Orders created',
-  labelNames: ['product', 'region'],
-});
-const chaosErrorRate = new client.Gauge({ name: 'app_chaos_error_rate', help: 'Injected error rate (0-1)' });
-const chaosLatency = new client.Gauge({ name: 'app_chaos_latency_ms', help: 'Injected latency in ms' });
-
-// ---------- Reference data ----------
-const PRICES = { laptop: 850, phone: 600, tablet: 400, monitor: 250, headphones: 120 };
-const PRODUCTS = Object.keys(PRICES);
-const REGIONS = ['north', 'south', 'east', 'west'];
-
-// ---------- Fault injection ----------
-const chaos = { errorRate: 0, latencyMs: 0 };
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function chaosMiddleware(req, res, next) {
-  if (chaos.latencyMs > 0) await sleep(chaos.latencyMs);
-  if (Math.random() < chaos.errorRate) {
-    return res.status(500).json({ error: 'injected failure' });
-  }
-  next();
-}
-
-// ---------- App ----------
-const app = express();
-app.use(express.json());
-
-// Metrics + request logging for every request except /metrics and /admin
-app.use((req, res, next) => {
-  if (req.path === '/metrics' || req.path.startsWith('/admin')) return next();
-  const start = process.hrtime.bigint();
-  inFlight.inc();
-  res.on('finish', () => {
-    inFlight.dec();
-    const seconds = Number(process.hrtime.bigint() - start) / 1e9;
-    const route = req.route ? req.baseUrl + req.route.path : 'unmatched';
-    const labels = { method: req.method, route, status: String(res.statusCode) };
-    httpRequests.inc(labels);
-    httpDuration.observe(labels, seconds);
-
-    const entry = {
-      method: req.method,
-      route,
-      status: res.statusCode,
-      duration_ms: Math.round(seconds * 1000),
-    };
-    if (res.statusCode >= 500) logger.error(entry, 'request failed');
-    else if (res.statusCode >= 400) logger.warn(entry, 'request rejected');
-    else logger.info(entry, 'request completed');
-  });
-  next();
-});
-
-app.get('/health', (req, res) => res.json({ status: 'UP' }));
-
-app.get('/api/products', chaosMiddleware, (req, res) => res.json(PRODUCTS));
-
-app.post('/api/orders', chaosMiddleware, async (req, res) => {
-  const { customer = 'guest', product, region, quantity = 1 } = req.body || {};
-  if (!PRODUCTS.includes(product) || !REGIONS.includes(region)) {
-    logger.warn({ product, region }, 'invalid order request');
-    return res.status(400).json({ error: 'invalid product or region' });
-  }
-  const qty = Math.max(1, Number(quantity) || 1);
-  const amount = PRICES[product] * qty;
-  const status = Math.random() < 0.1 ? 'PAYMENT_FAILED' : 'PAID';
-  const { rows } = await pool.query(
-    'INSERT INTO orders (customer, product, region, quantity, amount, status) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
-    [customer, product, region, qty, amount, status]
-  );
-  ordersCreated.inc({ product, region });
-  logger.info({ orderId: rows[0].id, customer, product, region, amount, orderStatus: status }, 'order created');
-  res.status(201).json({ id: rows[0].id, status });
-});
-
-app.get('/api/orders', chaosMiddleware, async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM orders ORDER BY id DESC LIMIT 20');
-  res.json(rows);
-});
-
-app.get('/api/orders/:id', chaosMiddleware, async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM orders WHERE id = $1', [Number(req.params.id) || 0]);
-  if (rows.length === 0) return res.status(404).json({ error: 'order not found' });
-  res.json(rows[0]);
-});
-
-app.get('/api/slow', chaosMiddleware, async (req, res) => {
-  const ms = 500 + Math.floor(Math.random() * 2000);
-  await sleep(ms);
-  res.json({ waitedMs: ms });
-});
-
-// Fault injection admin endpoints
-app.get('/admin/chaos', (req, res) => res.json(chaos));
-app.post('/admin/chaos', (req, res) => {
-  const { errorRate, latencyMs } = req.body || {};
-  if (errorRate !== undefined) chaos.errorRate = Math.min(1, Math.max(0, Number(errorRate)));
-  if (latencyMs !== undefined) chaos.latencyMs = Math.max(0, Number(latencyMs));
-  chaosErrorRate.set(chaos.errorRate);
-  chaosLatency.set(chaos.latencyMs);
-  logger.warn({ chaos }, 'chaos settings changed');
-  res.json(chaos);
-});
-
-// Prometheus metrics endpoint
-app.get('/metrics', async (req, res) => {
-  res.set('Content-Type', client.register.contentType);
-  res.end(await client.register.metrics());
-});
-
-// Error handler (e.g. database errors)
-app.use((err, req, res, next) => {
-  logger.error({ err: err.message }, 'unhandled error');
-  res.status(500).json({ error: 'internal error' });
-});
-
-app.listen(PORT, () => {
-  console.log(`orders-api listening on http://localhost:${PORT}`);
-  logger.info({ port: PORT }, 'orders-api started');
-});
-```
-
-### `C:\grafana-lab\sample-app\load.js`
-
-```javascript
-// Load generator for orders-api.
-// Usage: node load.js [requestsPerSecond]   (default 5)
-
-const BASE = process.env.BASE_URL || 'http://localhost:8080';
-const RPS = Number(process.argv[2] || 5);
-
-const PRODUCTS = ['laptop', 'phone', 'tablet', 'monitor', 'headphones'];
-const REGIONS = ['north', 'south', 'east', 'west'];
-const CUSTOMERS = ['acme', 'globex', 'initech', 'umbrella', 'stark', 'wayne'];
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-
-async function hit() {
-  const r = Math.random();
-  try {
-    if (r < 0.5) {
-      // ~3% invalid product -> 400
-      const product = Math.random() < 0.03 ? 'toaster' : pick(PRODUCTS);
-      await fetch(`${BASE}/api/orders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer: pick(CUSTOMERS),
-          product,
-          region: pick(REGIONS),
-          quantity: 1 + Math.floor(Math.random() * 3),
-        }),
-      });
-    } else if (r < 0.75) {
-      await fetch(`${BASE}/api/orders`);
-    } else if (r < 0.9) {
-      await fetch(`${BASE}/api/products`);
-    } else if (r < 0.98) {
-      // some IDs will not exist -> 404
-      await fetch(`${BASE}/api/orders/${1 + Math.floor(Math.random() * 8000)}`);
-    } else {
-      await fetch(`${BASE}/api/slow`);
-    }
-  } catch (e) {
-    console.error(new Date().toISOString(), 'request error:', e.message);
-  }
-}
-
-console.log(`Sending ~${RPS} requests/sec to ${BASE}. Press Ctrl+C to stop.`);
-setInterval(hit, 1000 / RPS);
-```
-
-### `C:\grafana-lab\sample-app\sql\setup-db.sql`
-
-Run as the `postgres` superuser.
-
-```sql
--- Users and database for the Grafana labs
-CREATE USER orders_app     WITH PASSWORD 'orders_app_pw';
-CREATE USER grafana_reader WITH PASSWORD 'grafana_reader_pw';
-CREATE DATABASE ordersdb OWNER orders_app;
-GRANT CONNECT ON DATABASE ordersdb TO grafana_reader;
-```
-
-### `C:\grafana-lab\sample-app\sql\schema.sql`
-
-Run as `orders_app`, connected to `ordersdb`.
-
-```sql
--- Orders table
-CREATE TABLE IF NOT EXISTS orders (
-    id          SERIAL PRIMARY KEY,
-    created_at  TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    customer    TEXT          NOT NULL,
-    product     TEXT          NOT NULL,
-    region      TEXT          NOT NULL,
-    quantity    INT           NOT NULL,
-    amount      NUMERIC(10,2) NOT NULL,
-    status      TEXT          NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at);
-
--- Read-only access for Grafana
-GRANT USAGE  ON SCHEMA public TO grafana_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO grafana_reader;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO grafana_reader;
-
--- Seed: ~5,000 orders spread over the last 30 days
-INSERT INTO orders (created_at, customer, product, region, quantity, amount, status)
-SELECT
-    now() - (random() * interval '30 days'),
-    (ARRAY['acme','globex','initech','umbrella','stark','wayne'])[1 + floor(random() * 6)::int],
-    p.product,
-    (ARRAY['north','south','east','west'])[1 + floor(random() * 4)::int],
-    q.qty,
-    p.price * q.qty,
-    CASE WHEN random() < 0.1 THEN 'PAYMENT_FAILED' ELSE 'PAID' END
-FROM generate_series(1, 5000) AS g
-CROSS JOIN LATERAL (
-    SELECT (ARRAY['laptop','phone','tablet','monitor','headphones'])[i] AS product,
-           (ARRAY[850, 600, 400, 250, 120])[i]                         AS price
-    FROM (SELECT 1 + floor(random() * 5)::int + (g * 0) AS i) s
-) p
-CROSS JOIN LATERAL (SELECT 1 + floor(random() * 3)::int + (g * 0) AS qty) q;
-```
-
-> **Note:** The `+ (g * 0)` terms force PostgreSQL to re-evaluate `random()` for each row inside the `LATERAL` subqueries. Without them, every row could get the same product and quantity.
+> **Note:** You don't need to read or change the code to complete the labs. Everything you'll monitor is described in Step 1.6: the endpoints, metrics and log fields. On Day 4, a tracing module is added to the same folder in the repository.
 
 ---
 

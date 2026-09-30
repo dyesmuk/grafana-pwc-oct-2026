@@ -69,7 +69,12 @@ The courseware is a set of Markdown files, one per day:
 | `day04-logs-traces.md` | Day 4 | Project-Specific Advanced Track (default: Logs & Traces) |
 | `day05-admin-automation-capstone.md` | Day 5 | Administration, Automation & Capstone |
 
-Config files, sample data and scripts used in the labs are in the **GitHub lab repository**. The link will be shared before the training.
+The **GitHub lab repository** contains:
+
+- the sample application source code (`sample-app/`), including its SQL scripts;
+- config files and scripts used in the labs.
+
+The link will be shared before the training. The day files show *how to use* the code; the code itself lives only in the repository.
 
 ### 2.2 Structure of every day file
 
@@ -196,8 +201,9 @@ scrape_configs:
 | Loki | Log storage and querying | 3100 |
 | Grafana Alloy | Collector for logs (and later traces) | 12345 (UI) |
 | PostgreSQL | Relational data for SQL dashboards | 5432 |
-| Sample application | Generates metrics, logs, DB records (and traces on Day 4) | Given in the lab repo |
+| Sample application (`orders-api`, Node.js + Express) | Generates metrics, logs, DB records (and traces on Day 4) | 8080 |
 
+- **Node.js LTS (24.x)**, to run the sample application (the portable ZIP works without admin rights)
 - VS Code (recommended) or Notepad++
 - Git for Windows
 - Latest Chrome / Edge
@@ -208,8 +214,9 @@ scrape_configs:
 
 ### 4.3 Permissions and network
 
-- Access to `grafana.com`, `github.com` and `postgresql.org` for downloads
-- Windows Firewall must allow these local ports: **3000, 9090, 9182, 3100, 5432**
+- Access to `grafana.com`, `github.com`, `postgresql.org` and `nodejs.org` for downloads
+- Access to `registry.npmjs.org`, so `npm install` can fetch the sample application's packages (or a corporate npm proxy)
+- Windows Firewall must allow these local ports: **3000, 9090, 9182, 3100, 5432, 8080**
 - Additional local ports used on Day 4 (tracing) will be listed in the Day 4 file
 
 ### 4.4 Alternatives (to be discussed)
@@ -374,7 +381,7 @@ All components are installed natively on your **Windows 11 PC** and accessed thr
 
 ```mermaid
 flowchart LR
-    APP[Sample application] -->|/metrics| PROM[Prometheus :9090]
+    APP[orders-api :8080] -->|/metrics| PROM[Prometheus :9090]
     WE[windows_exporter :9182] -->|host metrics| PROM
     APP -->|log files| ALLOY[Grafana Alloy]
     ALLOY -->|push logs| LOKI[Loki :3100]
@@ -386,11 +393,20 @@ flowchart LR
     USER[You - Browser] --> GRAF
 ```
 
-In text form:
+The lab has three data paths, plus a fourth from Day 4. Every path **ends** at Grafana:
 
 ```
-Sample application ─► windows_exporter ─► Prometheus ─► Loki / Alloy ─► PostgreSQL ─► Grafana
+Metrics:  orders-api (/metrics) + windows_exporter ──scrape──► Prometheus ──PromQL──► Grafana
+Logs:     orders-api (log file) ──► Alloy ──push──► Loki ──LogQL──► Grafana
+SQL:      orders-api (orders)   ──► PostgreSQL ──SQL──► Grafana
+Traces:   orders-api (Day 4)    ──► Alloy ──► Tempo ──TraceQL──► Grafana
 ```
+
+**Who does what:**
+
+- **Producers:** `orders-api` and `windows_exporter` produce the data.
+- **Collectors / stores:** Prometheus, Alloy, Loki, Tempo and PostgreSQL collect and store it.
+- **Grafana:** queries the stores and visualises and alerts on the results. It never collects data itself.
 
 - **Metrics path:** the sample app and windows_exporter expose metrics → Prometheus scrapes them → Grafana queries them with **PromQL**.
 - **Logs path:** the sample app writes log files → Alloy reads and ships them → Loki stores them → Grafana queries them with **LogQL**.
@@ -412,11 +428,13 @@ C:\grafana-lab\
 ├── windows_exporter\    windows_exporter installer / exe
 ├── loki\                loki.exe + loki-config.yaml
 ├── alloy\               Alloy config (config.alloy)
-├── sample-app\          sample application + logs\
+├── sample-app\          orders-api (Node.js + Express) + logs\
 ├── provisioning\        dashboards & data sources as code (Day 5)
 ├── dashboards\          exported dashboard JSON files
 ├── terraform\           Terraform files (Day 5, optional)
-└── repo\                clone of the GitHub lab repository
+├── repo\                clone of the GitHub lab repository
+├── start-lab.ps1        starts the lab stack
+└── stop-lab.ps1         stops the lab stack
 ```
 
 ### 9.2 Conventions used in the day files
@@ -444,7 +462,7 @@ Complete this **before Day 1** and confirm to the coordinator. Tick each item:
 
 ```powershell
 # Check all lab ports are listening
-3000, 9090, 9182, 3100, 5432 | ForEach-Object {
+3000, 9090, 9182, 3100, 5432, 8080 | ForEach-Object {
     $r = Test-NetConnection localhost -Port $_ -WarningAction SilentlyContinue
     "{0,-6} {1}" -f $_, ($(if ($r.TcpTestSucceeded) {"OK"} else {"NOT LISTENING"}))
 }
@@ -463,7 +481,7 @@ Invoke-RestMethod http://localhost:3000/api/health
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| Port shows NOT LISTENING | Service not started | Start it from `services.msc` or run the exe as per the setup guide |
+| Port shows NOT LISTENING | Component not started | Run `C:\grafana-lab\start-lab.ps1`. For windows_exporter and PostgreSQL, start the service from `services.msc` |
 | Page loads on the same PC but not after restart | Service not set to start automatically | Set startup type to *Automatic* in `services.msc` |
 | `windows_exporter` target is DOWN | Wrong target in `prometheus.yml`, or firewall | Check the target is `localhost:9182`; allow the port in the firewall |
 | Cannot download installers | Proxy / corporate network block | Ask IT to allow the sites in section 4.3, or use pre-downloaded installers |
