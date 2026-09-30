@@ -541,7 +541,6 @@ A quick warm-up. There's no pressure: these topics are covered in detail from Da
 - **Logs to check first:**
   - Grafana: `C:\grafana-lab\grafana\data\log\grafana.log`
   - Other components: the console window or log folder, as described in each day's *Troubleshooting* section.
-- **Trainer contact:** Vaman Rao Deshmukh, vamandeshmukh@gmail.com
 
 ---
 
